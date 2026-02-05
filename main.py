@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import tempfile
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
@@ -9,14 +10,14 @@ import numpy as np
 import librosa
 import soundfile as sf
 
-# Load environment variables
+# Load Environment Variables
 load_dotenv()
 API_KEY = os.getenv("API_KEY", "")
 
-# Supported languages
+# Supported Languages
 SUPPORTED_LANGUAGES = ["English", "Hindi", "Malayalam", "Telugu", "Tamil"]
 
-# Audio & feature parameters
+# Audio & Feature Parameters
 SAMPLE_RATE = 16000
 
 # Load trained ML model
@@ -40,7 +41,9 @@ def check_api_key(api_key: str):
 # Feature Extraction
 def extract_features(y, sr):
     # Mel Spectrogram
-    mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr // 2)
+    mel = librosa.feature.melspectrogram(
+        y=y, sr=sr, n_mels=128, fmax=sr // 2
+    )
     mel_db = librosa.power_to_db(mel, ref=np.max)
     mel_mean = np.mean(mel_db, axis=1)
     mel_std = np.std(mel_db, axis=1)
@@ -51,19 +54,25 @@ def extract_features(y, sr):
     mfcc_std = np.std(mfcc, axis=1)
 
     # Combine features
-    features = np.concatenate([mel_mean, mel_std, mfcc_mean, mfcc_std])
+    features = np.concatenate([
+        mel_mean, mel_std,
+        mfcc_mean, mfcc_std
+    ])
     return features
 
-# Preprocess audio
+# Preprocess audio (MP3-safe)
 def preprocess_audio(audio_bytes: bytes):
     try:
-        y, sr = sf.read(io.BytesIO(audio_bytes))
+        # Write MP3 bytes to temp file
+        with tempfile.NamedTemporaryFile(suffix=".mp3") as tmp:
+            tmp.write(audio_bytes)
+            tmp.flush()
+
+            # Decode MP3 using librosa (ffmpeg-backed)
+            y, sr = librosa.load(tmp.name, sr=None, mono=True)
+
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid Audio File !!")
-
-    # Convert to mono
-    if y.ndim > 1:
-        y = y.mean(axis=1)
 
     # Resample
     if sr != SAMPLE_RATE:
@@ -74,7 +83,6 @@ def preprocess_audio(audio_bytes: bytes):
 
     # Extract features
     features = extract_features(y, SAMPLE_RATE)
-
     return features.reshape(1, -1)
 
 # Generate explanation for prediction
@@ -98,9 +106,9 @@ def detect_voice(req: VoiceRequest, x_api_key: str = Header(...)):
     if req.audioFormat.lower() != "mp3":
         raise HTTPException(status_code=400, detail="Only MP3 Audio supported !!")
 
-    # Decode Base64 Audio
+    # Decode Base64 Audio (STRICT)
     try:
-        audio_bytes = base64.b64decode(req.audioBase64)
+        audio_bytes = base64.b64decode(req.audioBase64, validate=True)
     except Exception:
         raise HTTPException(status_code=400, detail="Malformed Base64 Audio !!")
 
@@ -109,7 +117,11 @@ def detect_voice(req: VoiceRequest, x_api_key: str = Header(...)):
 
     # Predict
     pred = model.predict(features)[0]
-    proba = float(np.max(model.predict_proba(features))) if hasattr(model, "predict_proba") else 1.0
+    proba = (
+        float(np.max(model.predict_proba(features)))
+        if hasattr(model, "predict_proba")
+        else 1.0
+    )
 
     # Map prediction to required output
     classification = "HUMAN" if pred == 1 else "AI_GENERATED"
