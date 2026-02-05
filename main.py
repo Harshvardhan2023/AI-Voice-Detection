@@ -5,6 +5,7 @@ import tempfile
 import re
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import joblib
 import numpy as np
@@ -37,7 +38,7 @@ class VoiceRequest(BaseModel):
 # Check API Key
 def check_api_key(api_key: str):
     if api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API Key !!")
+        raise HTTPException(status_code=401, detail="Invalid API Key")
 
 # Feature Extraction
 def extract_features(y, sr):
@@ -48,13 +49,10 @@ def extract_features(y, sr):
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     mfcc_mean = np.mean(mfcc, axis=1)
     mfcc_std = np.std(mfcc, axis=1)
-    features = np.concatenate([
-        mel_mean, mel_std,
-        mfcc_mean, mfcc_std
-    ])
+    features = np.concatenate([mel_mean, mel_std, mfcc_mean, mfcc_std])
     return features
 
-# Preprocess audio (MP3-safe with ID3 tag handling)
+# Preprocess Audio (MP3-safe with ID3 tag handling)
 def preprocess_audio(audio_bytes: bytes):
     try:
         # Remove ID3 tags if present
@@ -79,7 +77,7 @@ def preprocess_audio(audio_bytes: bytes):
             os.unlink(tmp_path)  # Clean up temp file
             
     except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid Audio File !!")
+        raise HTTPException(status_code=400, detail="Invalid or Corrupted Audio File")
     
     if sr != SAMPLE_RATE:
         y = librosa.resample(y, orig_sr=sr, target_sr=SAMPLE_RATE)
@@ -90,10 +88,31 @@ def preprocess_audio(audio_bytes: bytes):
 
 # Generate explanation
 def explain_prediction(pred, proba):
-    if pred == 0:
-        return f"AI-generated Patterns Detected (Confidence {proba:.2f})"
-    else:
-        return f"Human Voice Patterns Detected (Confidence {proba:.2f})"
+    if pred == 0:  # AI_GENERATED
+        if proba > 0.9:
+            return "Strong AI Patterns detected: Unnatural Pitch Consistency and Robotic Speech Characteristics"
+        elif proba > 0.7:
+            return "Moderate AI Patterns detected: Synthetic Voice Artifacts and Irregular Prosody"
+        else:
+            return "Weak AI Patterns detected: Some Unnatural Speech Characteristics present"
+    else:  # HUMAN
+        if proba > 0.9:
+            return "Strong Human Voice Patterns detected: Natural Speech Variations and Organic Vocal Characteristics"
+        elif proba > 0.7:
+            return "Moderate Human Voice Patterns detected: Typical Human Speech Dynamics detected"
+        else:
+            return "Weak Human Voice Patterns detected: Some Natural Speech Characteristics present"
+
+# Error handler for proper error response format
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "status": "error",
+            "message": exc.detail
+        }
+    )
 
 # Main API endpoint
 @app.post("/api/voice-detection")
@@ -101,16 +120,16 @@ def detect_voice(req: VoiceRequest, x_api_key: str = Header(...)):
     check_api_key(x_api_key)
     
     if req.language not in SUPPORTED_LANGUAGES:
-        raise HTTPException(status_code=400, detail="Unsupported Language")
+        raise HTTPException(status_code=400, detail="Unsupported language. Must be one of: English, Hindi, Malayalam, Telugu, Tamil")
     
     if req.audioFormat.lower() != "mp3":
-        raise HTTPException(status_code=400, detail="Only MP3 Audio supported !!")
+        raise HTTPException(status_code=400, detail="Only MP3 format is supported")
     
     clean_b64 = re.sub(r"\s+", "", req.audioBase64)
     try:
         audio_bytes = base64.b64decode(clean_b64)
     except Exception:
-        raise HTTPException(status_code=400, detail="Malformed Base64 Audio !!")
+        raise HTTPException(status_code=400, detail="Invalid Base64 encoding")
     
     features = preprocess_audio(audio_bytes)
     pred = model.predict(features)[0]
@@ -127,6 +146,6 @@ def detect_voice(req: VoiceRequest, x_api_key: str = Header(...)):
         "status": "success",
         "language": req.language,
         "classification": classification,
-        "confidenceScore": proba,
+        "confidenceScore": round(proba, 5),
         "explanation": explanation
     }
