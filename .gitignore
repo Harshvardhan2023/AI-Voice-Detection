@@ -1,0 +1,31 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+*.env
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# Data and audio files
+data/
+*.mp3
+*.ogg
+*.wav
+
+# VSCode / IDE settings
+.vscode/
+.idea/
+
+samples/
