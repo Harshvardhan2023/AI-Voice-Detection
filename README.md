@@ -50,6 +50,7 @@ The pipeline includes:
 - Each audio clip: **5 seconds**, **16 kHz**  
 
 Directory Structure:
+```kotlin
 data/
 ├─ AI/
 |  ├─ English/
@@ -63,7 +64,7 @@ data/
 |  ├─ Malayalam/
 |  ├─ Telugu/
 │  └─ Tamil/
-
+```
 
 ---
 
@@ -87,6 +88,7 @@ data/
   "audioFormat": "mp3",
   "audioBase64": "<Base64 MP3>"
 }
+```
 
 - Response:
 ```json
@@ -97,6 +99,7 @@ data/
   "confidenceScore": 0.91,
   "explanation": "Unnatural pitch consistency and robotic speech patterns detected"
 }
+```
 
 - Secured with x-api-key header
 
@@ -111,12 +114,14 @@ source venv/bin/activate
 # Windows
 venv\Scripts\activate
 pip install -r requirements.txt
+```
 
-Usage
+## Usage
 
 Run the API locally:
 ```bash
 uvicorn main:app --reload
+```
 
 Send a request (example with cURL):
 ```bash
@@ -124,3 +129,4 @@ curl -X POST http://127.0.0.1:8000/api/voice-detection \
 -H "Content-Type: application/json" \
 -H "x-api-key: <YOUR_API_KEY>" \
 -d '{"language": "Hindi", "audioFormat": "mp3", "audioBase64": "<BASE64_AUDIO>"}'
+```
