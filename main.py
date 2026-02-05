@@ -45,33 +45,46 @@ def extract_features(y, sr):
     mel_db = librosa.power_to_db(mel, ref=np.max)
     mel_mean = np.mean(mel_db, axis=1)
     mel_std = np.std(mel_db, axis=1)
-
     mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     mfcc_mean = np.mean(mfcc, axis=1)
     mfcc_std = np.std(mfcc, axis=1)
-
     features = np.concatenate([
         mel_mean, mel_std,
         mfcc_mean, mfcc_std
     ])
     return features
 
-# Preprocess audio (MP3-safe)
+# Preprocess audio (MP3-safe with ID3 tag handling)
 def preprocess_audio(audio_bytes: bytes):
     try:
-        with tempfile.NamedTemporaryFile(suffix=".mp3") as tmp:
+        # Remove ID3 tags if present
+        if audio_bytes.startswith(b'ID3'):
+            if len(audio_bytes) >= 10:
+                # ID3v2 tag size is stored in bytes 6-9 as synchsafe integer
+                size = ((audio_bytes[6] & 0x7f) << 21) | \
+                       ((audio_bytes[7] & 0x7f) << 14) | \
+                       ((audio_bytes[8] & 0x7f) << 7) | \
+                       (audio_bytes[9] & 0x7f)
+                # Skip ID3 header (10 bytes) + tag data
+                audio_bytes = audio_bytes[10 + size:]
+        
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp.flush()
-            y, sr = librosa.load(tmp.name, sr=None, mono=True)
-
-    except Exception:
+            tmp_path = tmp.name
+        
+        try:
+            y, sr = librosa.load(tmp_path, sr=None, mono=True)
+        finally:
+            os.unlink(tmp_path)  # Clean up temp file
+            
+    except Exception as e:
         raise HTTPException(status_code=400, detail="Invalid Audio File !!")
-
+    
     if sr != SAMPLE_RATE:
         y = librosa.resample(y, orig_sr=sr, target_sr=SAMPLE_RATE)
-
+    
     y = librosa.util.normalize(y)
-
     features = extract_features(y, SAMPLE_RATE)
     return features.reshape(1, -1)
 
@@ -86,32 +99,30 @@ def explain_prediction(pred, proba):
 @app.post("/api/voice-detection")
 def detect_voice(req: VoiceRequest, x_api_key: str = Header(...)):
     check_api_key(x_api_key)
-
+    
     if req.language not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail="Unsupported Language")
-
+    
     if req.audioFormat.lower() != "mp3":
         raise HTTPException(status_code=400, detail="Only MP3 Audio supported !!")
-
+    
     clean_b64 = re.sub(r"\s+", "", req.audioBase64)
-
     try:
         audio_bytes = base64.b64decode(clean_b64)
     except Exception:
         raise HTTPException(status_code=400, detail="Malformed Base64 Audio !!")
-
+    
     features = preprocess_audio(audio_bytes)
-
     pred = model.predict(features)[0]
     proba = (
         float(np.max(model.predict_proba(features)))
         if hasattr(model, "predict_proba")
         else 1.0
     )
-
+    
     classification = "HUMAN" if pred == 1 else "AI_GENERATED"
     explanation = explain_prediction(pred, proba)
-
+    
     return {
         "status": "success",
         "language": req.language,
